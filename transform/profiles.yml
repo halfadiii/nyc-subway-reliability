@@ -24,6 +24,14 @@ mta_reliability:
       threads: 4
       extensions:
         - json
+      settings:
+        # Spill to disk rather than die. The landing zone grows by a few
+        # million rows a day and the deduplicating window function over it has
+        # to sort; without somewhere to put the intermediate, a month of
+        # history is an allocation failure rather than a slow query.
+        memory_limit: "{{ env_var('DUCKDB_MEMORY_LIMIT', '4GB') }}"
+        temp_directory: "{{ env_var('DUCKDB_TEMP', '../data/duckdb-tmp') }}"
+        preserve_insertion_order: false
 
     bigquery:
       type: bigquery

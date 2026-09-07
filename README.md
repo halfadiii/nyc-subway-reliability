@@ -89,11 +89,26 @@ prediction that vanishes while still more than `arrival_grace_seconds` (120s) in
 the future was not an arrival.
 
 That third rule is a threshold, and thresholds are the weakest thing in any
-pipeline. So it is a project variable, and `run.py sensitivity` rebuilds the marts
-across a range of it and reports how far the headline numbers move. Measured on
-the sample: arrivals move from 1,025 at 60s to 1,047 at 480s — an eightfold
-change in the threshold moves the count by 2%, which says the rule is not doing
-much work and the result stands on the data rather than on the judgement call.
+pipeline. So it is a project variable, and `run.py sensitivity` rebuilds the
+marts across a range of it and reports how far the headline numbers move.
+Measured on a 150-minute run of all eight feeds — 1.6M observations:
+
+| grace | arrivals | headways | route-hours | mean headway | excess wait |
+| --- | --- | --- | --- | --- | --- |
+| 30s | 9,019 | 7,475 | 1,644 | 19.21 | 0.55 |
+| 60s | 9,224 | 7,673 | 1,698 | 19.16 | 0.54 |
+| **120s** | **9,344** | **7,789** | **1,728** | **19.13** | **0.54** |
+| 240s | 9,401 | 7,845 | 1,744 | 19.09 | 0.54 |
+| 480s | 9,441 | 7,884 | 1,749 | 19.05 | 0.53 |
+
+**A sixteenfold change in the threshold moves excess wait by 3.8%.** The rule is
+not doing much work, and the answer rests on the data rather than on the
+judgement call in the middle of the pipeline. That is the sort of thing worth
+knowing before quoting a number, and it is why the sweep exists.
+
+It also earned its keep immediately: the sweep failed at 240s because a dbt test
+had `120` typed into it rather than reading the variable. A test that hardcodes
+the thing it is checking only passes on the default.
 
 ---
 
@@ -241,10 +256,16 @@ There is a version trap there worth knowing about before it costs you an hour;
 
 ## State of things, honestly
 
-**Working and verified here:** the poller (eight feeds, no failures over a
-sustained run), the landing format, every dbt model, all 56 dbt checks, all 8
-correctness tests, the static-GTFS seeds, the weather fetch, the sensitivity
-sweep, and the summariser.
+**Working and verified here.** A 150-minute continuous run of all eight feeds:
+300 rounds, **1,600,014 rows, zero failures** across 2,400 fetches and zero
+duplicate snapshots. That built to 9,344 inferred arrivals, 7,789 headways and
+3,408 route-hours of excess wait, with all 56 dbt checks and all 8 correctness
+tests passing, in 15 seconds.
+
+The worst hour it found, on overnight service: the A at 59 St–Columbus Circle,
+mean headway 20.6 minutes and **8.9 minutes of excess wait** — riders waiting
+half again as long as an evenly spread service of the same frequency would ask
+of them.
 
 **Written but not exercised against a live project:** the BigQuery path
 (`load/bigquery/`). The DDL and the loader are here and `--dry-run` works, but

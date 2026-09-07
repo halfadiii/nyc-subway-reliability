@@ -13,12 +13,28 @@ sources:
         # DuckDB reads the poller's output straight off the disk. BigQuery
         # ignores this key and resolves the source to the real table that
         # `load/bigquery/load_bq.py` appends to.
+        # No `union_by_name`, and that is the whole performance story here.
+        #
+        # It was set, and it worked on an afternoon of files and died on a
+        # night of them: `Out of Memory Error: Allocation failure`, before a
+        # single row was read. `union_by_name` exists to reconcile files whose
+        # columns differ, and reconciling means opening every one of them to
+        # find out what is in it. At 2,400 files that is the query.
+        #
+        # It was never needed. One writer produces every file, with the fixed
+        # column set in `ingest/schema.py`, so there are no schemas to
+        # reconcile -- it was doing 2,400 file opens to discover that they are
+        # all identical. Without it the same 1.6M rows read in 0.6 seconds, and
+        # inference off the first file gets every type right.
+        #
+        # If the row shape ever does change, the honest fix is a version column
+        # and two sources, not a flag that makes every read pay for the
+        # possibility.
         meta:
           external_location: >-
             read_json_auto(
               '{{ env_var("MTA_RAW_GLOB", "../data/raw/**/*.ndjson.gz") }}',
-              hive_partitioning = 1,
-              union_by_name = true
+              hive_partitioning = 1
             )
         columns:
           - name: feed_id

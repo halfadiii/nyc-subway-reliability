@@ -25,8 +25,15 @@ models:
         data_tests:
           - not_null
           - between:
+              # Read from the variable rather than typed as 120. The
+              # sensitivity sweep varies the threshold, and this failed at 240s
+              # with 57 rows -- correctly, in that the data really did exceed
+              # the number written here, and uselessly, because the number
+              # written here was meant to *be* the threshold. A test that
+              # hardcodes the thing it is checking only passes on the default,
+              # and the sweep is what found it.
               lower: -86400
-              upper: 120
+              upper: "{{ var('arrival_grace_seconds') }}"
       - name: observations_of_pair
         description: >-
           How many snapshots carried this pair before it went. One is a weaker

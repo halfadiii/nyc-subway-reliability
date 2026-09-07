@@ -33,3 +33,4 @@ logs/
 
 # dbt writes an anonymous install id here.
 transform/.user.yml
+data/duckdb-tmp/
