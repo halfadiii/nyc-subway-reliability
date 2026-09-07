@@ -1,0 +1,49 @@
+name: ci
+
+# Builds the whole pipeline from a clone, on the sample of real observations
+# committed to the repository, and runs every test. No cloud account, no
+# credentials, no network beyond PyPI -- which is the point of committing a
+# sample: if CI cannot rebuild this project, neither can a reviewer.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Protobuf bindings load
+        # The gencode/runtime pin is the most fragile thing in the dependency
+        # set and it fails at import, so it is checked first and on its own.
+        # See docs/architecture.md.
+        working-directory: ingest
+        run: python -c "from com.google.transit.realtime import gtfs_realtime_pb2; print('bindings ok')"
+
+      - name: Build the warehouse from the committed sample
+        working-directory: transform
+        env:
+          MTA_RAW_GLOB: ../data/sample/**/*.ndjson.gz
+          MTA_DUCKDB: ../data/ci.duckdb
+        run: dbt build --profiles-dir .
+
+      - name: Correctness tests
+        # These build their own fixtures with a known answer and run the real
+        # models against them; see tests/test_pipeline.py.
+        run: python -m pytest tests -q
+
+      - name: Summary
+        run: python scripts/summarise.py data/ci.duckdb
