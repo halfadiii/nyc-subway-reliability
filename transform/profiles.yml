@@ -1,0 +1,39 @@
+# Two targets against the same models.
+#
+# `duckdb` is the default and needs nothing: it reads the gzipped NDJSON the
+# poller writes, straight off the disk, so the whole pipeline runs on a laptop
+# with no cloud account and no credentials. That is what makes this repository
+# reviewable by somebody who is not me.
+#
+# `bigquery` is where it actually runs. Same models, same tests: every one of
+# them is written with dbt's cross-database macros rather than either dialect's
+# own functions, so there is one definition of an arrival and not two.
+#
+#   dbt build --profiles-dir .                     # duckdb, the default
+#   dbt build --profiles-dir . --target bigquery   # needs the env vars below
+#
+mta_reliability:
+  target: duckdb
+
+  outputs:
+    duckdb:
+      type: duckdb
+      # Committed nowhere: see .gitignore. Rebuilt from the raw files whenever
+      # anyone runs the project, which is the point of keeping the raw files.
+      path: "{{ env_var('MTA_DUCKDB', '../data/warehouse.duckdb') }}"
+      threads: 4
+      extensions:
+        - json
+
+    bigquery:
+      type: bigquery
+      method: "{{ env_var('BQ_METHOD', 'oauth') }}"
+      project: "{{ env_var('BQ_PROJECT', '') }}"
+      dataset: "{{ env_var('BQ_DATASET', 'mta') }}"
+      location: "{{ env_var('BQ_LOCATION', 'US') }}"
+      threads: 8
+      # A transformation that has run for ten minutes is a transformation that
+      # has gone wrong; these models read one partition of one day.
+      job_execution_timeout_seconds: 600
+      job_retries: 2
+      priority: interactive

@@ -1,0 +1,38 @@
+version: 2
+
+models:
+  - name: stg_stop_time_updates
+    description: >-
+      The landing rows with their columns made usable: types cast, the two
+      identifiers the feed hides inside strings pulled out, and exact
+      duplicates removed on the natural key. Nothing is filtered -- what counts
+      as an arrival is decided one layer up, on a stated rule, where the
+      decision is visible in a diff.
+    data_tests:
+      - unique_combination:
+          columns: [feed_id, observed_at, trip_id, stop_id]
+    columns:
+      - name: feed_id
+        data_tests:
+          - not_null
+          - accepted_values:
+              values: [numbered, ace, bdfm, g, jz, nqrw, l, sir]
+      - name: observed_at
+        description: The feed's own clock. The event time.
+        data_tests: [not_null]
+      - name: fetched_at
+        description: Our clock. Never the event time.
+        data_tests: [not_null]
+      - name: stop_id
+        data_tests: [not_null]
+      - name: station_id
+        description: The stop id with its direction letter removed.
+        data_tests: [not_null]
+      - name: platform_direction
+        data_tests:
+          - accepted_values:
+              values: ['N', 'S']
+      - name: schedule_relationship
+        data_tests:
+          - accepted_values:
+              values: [SCHEDULED, SKIPPED, NO_DATA, UNSCHEDULED]

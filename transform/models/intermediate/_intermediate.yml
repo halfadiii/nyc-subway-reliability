@@ -1,0 +1,34 @@
+version: 2
+
+models:
+  - name: int_inferred_arrivals
+    description: >-
+      The measurement the project exists for: an arrival reconstructed from the
+      absence of a record. Three rules decide whether a disappearance counts;
+      they are set out in the model and proved in tests/test_pipeline.py
+      against fixtures whose answer is known by construction.
+    data_tests:
+      - unique_combination:
+          columns: [service_date_raw, trip_id, stop_id]
+    columns:
+      - name: inferred_arrival
+        description: The last prediction that existed before the record vanished.
+        data_tests: [not_null]
+      - name: last_seen_at
+        description: The observation that prediction came from.
+        data_tests: [not_null]
+      - name: lead_seconds
+        description: >-
+          How far ahead the arrival still was when the record went. Near zero is
+          a train pulling in; negative is one already overdue, which still
+          arrived. Bounded above by the cancellation rule.
+        data_tests:
+          - not_null
+          - between:
+              lower: -86400
+              upper: 120
+      - name: observations_of_pair
+        description: >-
+          How many snapshots carried this pair before it went. One is a weaker
+          observation than twenty and worth being able to filter on.
+        data_tests: [not_null]

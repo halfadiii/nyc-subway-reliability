@@ -1,0 +1,42 @@
+version: 2
+
+sources:
+  - name: raw
+    description: >-
+      The landing zone. One row per predicted stop per snapshot, exactly as the
+      poller flattened it: append-only, nothing deduplicated or corrected on the
+      way in. A transformation bug downstream is a query to rewrite; an
+      observation dropped here is gone.
+    tables:
+      - name: stop_time_updates
+        description: Flattened GTFS-realtime stop-time updates from all eight feeds.
+        # DuckDB reads the poller's output straight off the disk. BigQuery
+        # ignores this key and resolves the source to the real table that
+        # `load/bigquery/load_bq.py` appends to.
+        meta:
+          external_location: >-
+            read_json_auto(
+              '{{ env_var("MTA_RAW_GLOB", "../data/raw/**/*.ndjson.gz") }}',
+              hive_partitioning = 1,
+              union_by_name = true
+            )
+        columns:
+          - name: feed_id
+            description: Which of the eight endpoints this snapshot came from.
+          - name: observed_at
+            description: >-
+              The feed header's own timestamp, in epoch seconds. The event time.
+              Every question this warehouse answers is asked in this clock.
+          - name: fetched_at
+            description: >-
+              Our clock, when the bytes landed. Never the event time; kept only
+              so the gap between the two can be monitored, because a feed that
+              has stopped being refreshed still answers requests.
+          - name: trip_id
+            description: MTA trip identifier, unique within a service date.
+          - name: stop_id
+            description: A single platform, e.g. 127N. Not a station.
+          - name: predicted_arrival
+            description: >-
+              What the MTA believed, at observed_at, about when this trip would
+              reach this stop. A prediction, never an arrival.

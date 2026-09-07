@@ -1,0 +1,49 @@
+name: mta_reliability
+version: "1.0.0"
+config-version: 2
+
+profile: mta_reliability
+
+model-paths: ["models"]
+macro-paths: ["macros"]
+test-paths: ["tests"]
+target-path: "target"
+clean-targets: ["target", "dbt_packages"]
+
+models:
+  mta_reliability:
+    staging:
+      # Views: staging only renames and casts, so materialising it would be a
+      # second copy of the landing table earning nothing.
+      +materialized: view
+    intermediate:
+      +materialized: view
+    marts:
+      # Tables: these are read repeatedly by the analysis and by anything
+      # downstream, and they are small enough that a table is free.
+      +materialized: table
+
+vars:
+  # ---------------------------------------------------------------------
+  # The cancellation rule.
+  #
+  # A trip-stop pair leaves the feed for two different reasons: the train
+  # arrived, or the trip was cancelled, re-routed or short-turned. The only
+  # thing separating them is whether the prediction was ever about to come
+  # true. A row that vanishes while still comfortably in the future was never
+  # an arrival.
+  #
+  # 120 seconds is a judgement call, and it is a threshold, which is the
+  # weakest part of this pipeline. It is a variable rather than a literal so
+  # that the sensitivity of every downstream number to it can be measured by
+  # re-running with a different value, which is exactly what
+  # `analysis/sensitivity.py` does.
+  # ---------------------------------------------------------------------
+  arrival_grace_seconds: 120
+
+  # Gaps outside this range are not headways. Under half a minute is the same
+  # train counted twice or two cars of one train; over an hour is a gap across
+  # a service change or an outage in our own polling, and averaging across a
+  # hole in the observations invents a wait nobody had.
+  min_headway_minutes: 0.5
+  max_headway_minutes: 60

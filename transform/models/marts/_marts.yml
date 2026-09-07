@@ -1,0 +1,130 @@
+version: 2
+
+models:
+  - name: dim_stations
+    description: >-
+      One row per station: everything the static bundle publishes, plus every
+      station the realtime feed actually referenced. See the model for why the
+      two are unioned rather than the second being dropped.
+    columns:
+      - name: station_id
+        description: Parent station id. Joins to `station_id` on every fact.
+        data_tests: [unique, not_null]
+      - name: is_published
+        description: >-
+          True where the static bundle carries this station. False for yard
+          leads, relay tracks and other non-revenue places the feed moves
+          trains through and the timetable does not name. Anything reported to
+          riders should filter on this; anything measuring the fleet should not.
+        data_tests: [not_null]
+      - name: station_name
+        description: >-
+          Null where `is_published` is false. Deliberately not filled in from
+          the id: a label that looks like a station name and is not one is
+          worse than a blank.
+        data_tests:
+          - not_null:
+              # Only the published half makes this promise.
+              config:
+                where: "is_published"
+      - name: latitude
+        data_tests:
+          - not_null:
+              config:
+                where: "is_published"
+      - name: longitude
+        data_tests:
+          - not_null:
+              config:
+                where: "is_published"
+
+  - name: dim_routes
+    description: One row per route, named and coloured from the static bundle.
+    columns:
+      - name: route_id
+        data_tests: [unique, not_null]
+      - name: route_long_name
+        data_tests: [not_null]
+
+  - name: fct_arrivals
+    description: >-
+      Every arrival the pipeline inferred. One row per trip, per stop, per
+      service date. The grain everything downstream aggregates from.
+    data_tests:
+      # Uniqueness on the real grain rather than on a surrogate key, because
+      # the same trip arriving twice at the same stop on the same day is
+      # exactly the failure mode the inference could have.
+      - unique_combination:
+          columns: [service_date_raw, trip_id, stop_id]
+    columns:
+      - name: trip_id
+        data_tests: [not_null]
+      - name: stop_id
+        data_tests: [not_null]
+      - name: inferred_arrival
+        data_tests: [not_null]
+      - name: station_id
+        description: Every arrival must land at a station that exists.
+        data_tests:
+          - not_null
+          - relationships:
+              to: ref('dim_stations')
+              field: station_id
+      - name: route_id
+        data_tests:
+          - not_null
+          - relationships:
+              to: ref('dim_routes')
+              field: route_id
+      - name: hour_of_day
+        data_tests:
+          - accepted_values:
+              values: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15,
+                       16, 17, 18, 19, 20, 21, 22, 23]
+              quote: false
+
+  - name: fct_headways
+    description: The gap between consecutive trains at one platform on one route.
+    data_tests:
+      - unique_combination:
+          columns: [service_date_raw, route_id, stop_id, inferred_arrival]
+    columns:
+      - name: headway_minutes
+        description: >-
+          Bounded by the project variables. Outside them it is not a headway;
+          see the model.
+        data_tests:
+          - not_null
+          - between:
+              lower: 0.5
+              upper: 60
+      - name: previous_arrival
+        data_tests: [not_null]
+      - name: station_id
+        data_tests:
+          - relationships:
+              to: ref('dim_stations')
+              field: station_id
+
+  - name: fct_excess_wait
+    description: >-
+      Excess wait time by route, platform and hour. The metric that describes
+      a bad commute; the mean headway does not.
+    data_tests:
+      - unique_combination:
+          columns: [service_date_raw, route_id, stop_id, service_hour]
+    columns:
+      - name: headways
+        description: >-
+          How many gaps the hour's figure is built from. An excess wait from
+          two gaps is arithmetic, not a measurement -- filter on this.
+        data_tests: [not_null]
+      - name: excess_wait_minutes
+        data_tests: [not_null]
+      - name: mean_headway_minutes
+        data_tests: [not_null]
+      - name: route_id
+        data_tests:
+          - relationships:
+              to: ref('dim_routes')
+              field: route_id
