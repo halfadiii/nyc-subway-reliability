@@ -1,0 +1,31 @@
+# Everything, for working on the project. The container that runs the poller
+# installs requirements-ingest.txt instead, which is two lines.
+#
+# protobuf is held below 7 on purpose. dbt-adapters and dbt-common both pin
+# protobuf<7, grpcio-tools 1.83 requires >=7.35, and the two cannot coexist --
+# so the generated bindings in ingest/com are compiled with a protoc that emits
+# gencode the 6.x runtime accepts. Raising either half without regenerating the
+# bindings breaks the poller at import time with a gencode/runtime version
+# error. See docs/architecture.md.
+
+# ingest
+requests>=2.31,<3
+protobuf>=6.30,<7
+# Only needed to regenerate the protobuf bindings; pinned to a release whose
+# protoc emits gencode the 6.x runtime can load.
+grpcio-tools==1.76.0
+
+# transform
+dbt-core>=1.8
+dbt-duckdb>=1.8
+duckdb>=1.0
+
+# analysis
+pandas>=2.0
+statsmodels>=0.14
+
+# tests
+pytest>=8.0
+
+# Optional: only needed to load into BigQuery.
+# google-cloud-bigquery>=3.20

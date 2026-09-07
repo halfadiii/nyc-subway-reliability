@@ -1,0 +1,8 @@
+# Just enough to poll and land rows. The transform and analysis dependencies
+# are deliberately not here: the container that runs every thirty seconds
+# should not be carrying dbt, pandas and statsmodels around with it.
+#
+# protobuf is pinned below 7 because dbt pins it there too, and the generated
+# bindings in ingest/com are compiled to match. See docs/architecture.md.
+requests>=2.31,<3
+protobuf>=6.30,<7

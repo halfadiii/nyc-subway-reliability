@@ -1,0 +1,35 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.env
+
+# Raw protobuf payloads, if anyone ever dumps one while debugging
+*.pb
+*.pb.gz
+
+# --------------------------------------------------------------------------
+# Collected observations.
+#
+# The poller writes a few megabytes an hour and is meant to run for weeks, so
+# the history does not belong in git -- it belongs in object storage or in the
+# warehouse. What IS committed is everything needed to rebuild it: the poller,
+# the models, the seeds, and a small sample under data/sample/ so that a clone
+# can run the whole pipeline end to end without waiting for data to accumulate.
+# --------------------------------------------------------------------------
+data/raw/
+data/weather/*.json
+data/*.duckdb
+data/*.duckdb.wal
+data/poller.log
+!data/sample/
+
+# dbt
+transform/target/
+transform/dbt_packages/
+transform/logs/
+logs/
+
+# dbt writes an anonymous install id here.
+transform/.user.yml
