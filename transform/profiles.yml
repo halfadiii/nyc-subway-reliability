@@ -5,9 +5,11 @@
 # with no cloud account and no credentials. That is what makes this repository
 # reviewable by somebody who is not me.
 #
-# `bigquery` is where it actually runs. Same models, same tests: every one of
-# them is written with dbt's cross-database macros rather than either dialect's
-# own functions, so there is one definition of an arrival and not two.
+# `bigquery` is where it is meant to run once it is hosted. Same models, same
+# tests: every one of them is written with dbt's cross-database macros rather
+# than either dialect's own functions, so there is one definition of an arrival
+# and not two. This target has not been run against a live project yet, and the
+# README says so; until it has, DuckDB is the only place this is known to work.
 #
 #   dbt build --profiles-dir .                     # duckdb, the default
 #   dbt build --profiles-dir . --target bigquery   # needs the env vars below

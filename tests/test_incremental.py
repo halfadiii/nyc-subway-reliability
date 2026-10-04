@@ -103,7 +103,7 @@ def write(raw_dir: Path, snapshots: Snapshots, suffix: str = "") -> None:
 
 def run_dbt(raw_dir: Path, warehouse: Path, *, full_refresh: bool = False,
             variables: dict | None = None) -> None:
-    """Run the real project. Incremental unless told otherwise, as in production."""
+    """Run the real project. Incremental unless told otherwise, as a normal build is."""
     environment = {
         **os.environ,
         "MTA_RAW_GLOB": str(raw_dir / "**" / "*.ndjson.gz").replace("\\", "/"),
