@@ -13,7 +13,8 @@ The shape of the thing, and the handful of decisions that were not obvious.
                         │                                         │
                         └───────────────► dbt ◄───────────────────┘
                                            │
-              stg_stop_time_updates  →  int_inferred_arrivals
+     stg_stop_time_updates  →  int_last_sightings  →  int_inferred_arrivals
+          (incremental)          (incremental)              (view)
                                            │
                     fct_arrivals  →  fct_headways  →  fct_excess_wait
                           ▲                                │
@@ -64,6 +65,34 @@ database, not by dbt — so a view works while dbt's working directory is
 `transform/` and fails for every script in `analysis/` and every ad-hoc query
 anyone ever runs. Materialising reads the files once, at build time, in the one
 place the relative path is known to be right.
+
+## What is incremental, and what is not
+
+Two models read only what is new: `stg_stop_time_updates` and
+`int_last_sightings`. They are the two that touch every observation. Staging
+decompresses and deduplicates the landing files; the last-sightings model sorts
+every observation of every trip-stop pair to find the final one. Both of those
+costs grow with the whole history when rebuilt, and with the last few hours
+when not.
+
+Everything downstream is still rebuilt in full, on purpose. `fct_arrivals`,
+`fct_headways` and `fct_excess_wait` read the arrivals, not the observations,
+and there are about 170 observations for every arrival. Making them incremental
+would add state to three more models to save a fraction of a second.
+
+The rule that makes the incremental model correct is which pairs it revisits,
+and the model's own comment sets it out. The short version: a pair's last
+sighting is final once it has been absent from a later snapshot, so only pairs
+seen at or after the previous run's watermark can change. That includes pairs
+in the newest snapshot of the previous run, which become arrivals without being
+observed again.
+
+The cancellation threshold stays out of the stored table and is applied in the
+`int_inferred_arrivals` view. It is the one number in the pipeline that is
+varied on purpose, and a stored verdict would be stale the moment it was.
+
+`tests/test_incremental.py` holds the claim that matters: built in several
+sittings or in one pass, the warehouse is the same.
 
 ## The protobuf version trap
 

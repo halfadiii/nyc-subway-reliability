@@ -3,8 +3,10 @@
 #   make setup      install dependencies into .venv
 #   make demo       build the warehouse from the committed sample and show it
 #   make poll       start collecting (Ctrl-C to stop)
-#   make build      build the warehouse from whatever has been collected
+#   make build      add what was collected since the last build
+#   make refresh    rebuild everything from the raw files
 #   make test       dbt tests + pytest
+#   make catalog    write docs/catalog.md from the project
 #   make rain       the weather regression
 #   make sensitivity  how much the cancellation threshold moves the answer
 #
@@ -20,7 +22,7 @@ endif
 DBT := $(PY) -m dbt.cli.main
 DBT_ARGS := --profiles-dir .
 
-.PHONY: setup demo poll build test dbt-test pytest rain sensitivity seeds docs clean
+.PHONY: setup demo poll build refresh test dbt-test pytest rain sensitivity seeds catalog docs clean
 
 setup:
 	python -m venv .venv
@@ -48,6 +50,11 @@ build:
 	cd transform && $(abspath $(PY)) -m dbt.cli.main build $(DBT_ARGS)
 	@$(PY) scripts/summarise.py data/warehouse.duckdb
 
+# Needed after a backfill older than the lookback, and whenever in doubt.
+refresh:
+	cd transform && $(abspath $(PY)) -m dbt.cli.main build --full-refresh $(DBT_ARGS)
+	@$(PY) scripts/summarise.py data/warehouse.duckdb
+
 # --------------------------------------------------------------------------
 # Checks.
 # --------------------------------------------------------------------------
@@ -67,6 +74,9 @@ rain:
 
 sensitivity:
 	$(PY) -m analysis.sensitivity
+
+catalog:
+	$(PY) scripts/catalog.py data/demo.duckdb
 
 docs:
 	cd transform && $(abspath $(PY)) -m dbt.cli.main docs generate $(DBT_ARGS)

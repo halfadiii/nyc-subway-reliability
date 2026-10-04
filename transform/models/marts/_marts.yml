@@ -6,17 +6,13 @@ models:
       One row per station: everything the static bundle publishes, plus every
       station the realtime feed actually referenced. See the model for why the
       two are unioned rather than the second being dropped.
+    meta:
+      grain: One row per station.
+      refresh: Rebuilt in full on every build.
     columns:
       - name: station_id
         description: Parent station id. Joins to `station_id` on every fact.
         data_tests: [unique, not_null]
-      - name: is_published
-        description: >-
-          True where the static bundle carries this station. False for yard
-          leads, relay tracks and other non-revenue places the feed moves
-          trains through and the timetable does not name. Anything reported to
-          riders should filter on this; anything measuring the fleet should not.
-        data_tests: [not_null]
       - name: station_name
         description: >-
           Null where `is_published` is false. Deliberately not filled in from
@@ -28,28 +24,67 @@ models:
               config:
                 where: "is_published"
       - name: latitude
+        description: From the static bundle. Null where `is_published` is false.
         data_tests:
           - not_null:
               config:
                 where: "is_published"
       - name: longitude
+        description: From the static bundle. Null where `is_published` is false.
         data_tests:
           - not_null:
               config:
                 where: "is_published"
+      - name: is_published
+        description: >-
+          True where the static bundle carries this station. False for yard
+          leads, relay tracks and other non-revenue places the feed moves
+          trains through and the timetable does not name. Anything reported to
+          riders should filter on this; anything measuring the fleet should not.
+        data_tests: [not_null]
+      - name: platform_count
+        description: How many platforms the static bundle lists under this station.
+      - name: observations
+        description: How many landed rows referenced this station.
+      - name: routes_observed
+        description: How many distinct routes were seen calling here.
 
   - name: dim_routes
     description: One row per route, named and coloured from the static bundle.
+    meta:
+      grain: One row per route.
+      refresh: Rebuilt in full on every build.
     columns:
       - name: route_id
+        description: The route as the feed names it, e.g. A.
         data_tests: [unique, not_null]
+      - name: route_short_name
+        description: The letter or number on the front of the train.
       - name: route_long_name
+        description: The published name, e.g. 8 Avenue Express.
         data_tests: [not_null]
+      - name: route_color
+        description: The MTA's colour for the line, as a hex code with its hash.
+      - name: route_text_color
+        description: The colour of the text set on it, as a hex code with its hash.
+      - name: feed_id
+        description: >-
+          The endpoint the route was actually observed on. Derived from the
+          data, not declared, so it reports a move rather than hiding one.
+      - name: trips_observed
+        description: Distinct trips seen on the route. Zero if it was never observed.
+      - name: first_observed_at
+        description: The earliest observation of the route.
+      - name: last_observed_at
+        description: The latest observation of the route.
 
   - name: fct_arrivals
     description: >-
       Every arrival the pipeline inferred. One row per trip, per stop, per
       service date. The grain everything downstream aggregates from.
+    meta:
+      grain: One row per service date, per trip, per stop.
+      refresh: Rebuilt in full from int_inferred_arrivals, which is a view over an incremental table.
     data_tests:
       # Uniqueness on the real grain rather than on a surrogate key, because
       # the same trip arriving twice at the same stop on the same day is
@@ -57,11 +92,24 @@ models:
       - unique_combination:
           columns: [service_date_raw, trip_id, stop_id]
     columns:
+      - name: service_date_raw
+        description: The service date the trip belongs to, YYYYMMDD.
+      - name: feed_id
+        description: The endpoint the arrival was observed on.
+      - name: route_id
+        description: The route. Joins to dim_routes.
+        data_tests:
+          - not_null
+          - relationships:
+              to: ref('dim_routes')
+              field: route_id
       - name: trip_id
+        description: MTA trip identifier, unique within a service date.
         data_tests: [not_null]
+      - name: train_id
+        description: The MTA's internal identifier for the physical train.
       - name: stop_id
-        data_tests: [not_null]
-      - name: inferred_arrival
+        description: The platform the train arrived at.
         data_tests: [not_null]
       - name: station_id
         description: Every arrival must land at a station that exists.
@@ -70,25 +118,77 @@ models:
           - relationships:
               to: ref('dim_stations')
               field: station_id
-      - name: route_id
-        data_tests:
-          - not_null
-          - relationships:
-              to: ref('dim_routes')
-              field: route_id
+      - name: platform_direction
+        description: N or S, from the stop id.
+      - name: direction
+        description: NORTH, SOUTH, EAST or WEST, from the MTA's extension.
+      - name: inferred_arrival
+        description: When the train arrived, as inferred. An instant, in UTC.
+        data_tests: [not_null]
+      - name: arrival_local
+        description: The same instant as New York wall-clock time.
+      - name: service_hour
+        description: arrival_local truncated to the hour. What excess wait is grouped by.
       - name: hour_of_day
+        description: 0 to 23, New York time.
         data_tests:
           - accepted_values:
               values: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15,
                        16, 17, 18, 19, 20, 21, 22, 23]
               quote: false
+      - name: day_of_week
+        description: Day of the week of arrival_local, as the warehouse numbers it.
+      - name: last_seen_at
+        description: The observation the arrival was read from.
+      - name: lead_seconds
+        description: How far ahead the arrival still was when the record vanished.
+      - name: observations_of_pair
+        description: How many snapshots carried this trip at this stop before it went.
+      - name: scheduled_track
+        description: The track the timetable had the train on.
+      - name: actual_track
+        description: The track it was actually routed to.
 
   - name: fct_headways
     description: The gap between consecutive trains at one platform on one route.
+    meta:
+      grain: One row per arrival that has a previous arrival on the same route and platform.
+      refresh: Rebuilt in full from fct_arrivals.
     data_tests:
       - unique_combination:
           columns: [service_date_raw, route_id, stop_id, inferred_arrival]
     columns:
+      - name: service_date_raw
+        description: The service date, YYYYMMDD.
+      - name: route_id
+        description: The route.
+      - name: stop_id
+        description: The platform.
+      - name: station_id
+        description: The station the platform belongs to.
+        data_tests:
+          - relationships:
+              to: ref('dim_stations')
+              field: station_id
+      - name: platform_direction
+        description: N or S.
+      - name: trip_id
+        description: The trip that closed the gap.
+      - name: previous_trip_id
+        description: The trip that opened it.
+      - name: previous_arrival
+        description: When the train before this one arrived.
+        data_tests: [not_null]
+      - name: inferred_arrival
+        description: When this one arrived.
+      - name: arrival_local
+        description: The same instant as New York wall-clock time.
+      - name: service_hour
+        description: arrival_local truncated to the hour.
+      - name: hour_of_day
+        description: 0 to 23, New York time.
+      - name: day_of_week
+        description: Day of the week of arrival_local, as the warehouse numbers it.
       - name: headway_minutes
         description: >-
           Bounded by the project variables. Outside them it is not a headway;
@@ -98,33 +198,56 @@ models:
           - between:
               lower: 0.5
               upper: 60
-      - name: previous_arrival
-        data_tests: [not_null]
-      - name: station_id
-        data_tests:
-          - relationships:
-              to: ref('dim_stations')
-              field: station_id
 
   - name: fct_excess_wait
     description: >-
       Excess wait time by route, platform and hour. The metric that describes
       a bad commute; the mean headway does not.
+    meta:
+      grain: One row per service date, per route, per platform, per hour.
+      refresh: Rebuilt in full from fct_headways.
     data_tests:
       - unique_combination:
           columns: [service_date_raw, route_id, stop_id, service_hour]
     columns:
+      - name: service_date_raw
+        description: The service date, YYYYMMDD.
+      - name: route_id
+        description: The route. Joins to dim_routes.
+        data_tests:
+          - relationships:
+              to: ref('dim_routes')
+              field: route_id
+      - name: stop_id
+        description: The platform.
+      - name: station_id
+        description: The station the platform belongs to.
+      - name: platform_direction
+        description: N or S.
+      - name: service_hour
+        description: The hour, New York time.
+      - name: hour_of_day
+        description: 0 to 23, New York time.
+      - name: day_of_week
+        description: Day of the week of the hour, as the warehouse numbers it.
       - name: headways
         description: >-
           How many gaps the hour's figure is built from. An excess wait from
           two gaps is arithmetic, not a measurement -- filter on this.
         data_tests: [not_null]
-      - name: excess_wait_minutes
-        data_tests: [not_null]
       - name: mean_headway_minutes
+        description: The average gap between trains in the hour.
         data_tests: [not_null]
-      - name: route_id
-        data_tests:
-          - relationships:
-              to: ref('dim_routes')
-              field: route_id
+      - name: min_headway_minutes
+        description: The shortest gap in the hour.
+      - name: max_headway_minutes
+        description: The longest gap in the hour.
+      - name: rider_wait_minutes
+        description: >-
+          The wait a rider turning up at random actually experiences: long gaps
+          weighted by their length, because more people walk into them.
+      - name: even_wait_minutes
+        description: What that wait would be if the same trains were evenly spread.
+      - name: excess_wait_minutes
+        description: rider_wait_minutes minus even_wait_minutes. Zero on a regular service.
+        data_tests: [not_null]

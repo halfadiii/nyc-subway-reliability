@@ -3,8 +3,10 @@
     python run.py                 list the tasks
     python run.py demo            build from the committed sample, and show it
     python run.py poll            start collecting (Ctrl-C to stop)
-    python run.py build           rebuild from everything collected
+    python run.py build           add what was collected since the last build
+    python run.py refresh         rebuild everything from the raw files
     python run.py test            dbt tests + the correctness tests
+    python run.py catalog         write docs/catalog.md from the project
     python run.py rain            the weather regression
     python run.py sensitivity     how much the threshold moves the answer
 
@@ -60,9 +62,18 @@ TASKS: dict[str, Task] = {
         {},
     ),
     "build": (
-        "rebuild the warehouse from everything collected so far",
+        "bring the warehouse up to date with what was collected since last time",
         ROOT / "transform",
         dbt("build"),
+        {},
+    ),
+    # The same models, told to forget what they hold. Needed after a backfill
+    # older than `incremental_lookback_hours`, and whenever in doubt: the raw
+    # files are the truth and this is the build that reads all of them.
+    "refresh": (
+        "rebuild the warehouse from every raw file, ignoring what it holds",
+        ROOT / "transform",
+        dbt("build", "--full-refresh"),
         {},
     ),
     "dbt-test": (
@@ -89,6 +100,12 @@ TASKS: dict[str, Task] = {
         [PY, "-m", "analysis.sensitivity"],
         {},
     ),
+    "catalog": (
+        "write docs/catalog.md from the project and the demo warehouse",
+        ROOT,
+        [PY, "scripts/catalog.py", "data/demo.duckdb"],
+        {},
+    ),
     "docs": (
         "generate the dbt documentation site",
         ROOT / "transform",
@@ -98,7 +115,11 @@ TASKS: dict[str, Task] = {
 }
 
 # Tasks that print a summary of the warehouse they just built.
-SUMMARISES = {"demo": "data/demo.duckdb", "build": "data/warehouse.duckdb"}
+SUMMARISES = {
+    "demo": "data/demo.duckdb",
+    "build": "data/warehouse.duckdb",
+    "refresh": "data/warehouse.duckdb",
+}
 
 
 def run(name: str) -> int:

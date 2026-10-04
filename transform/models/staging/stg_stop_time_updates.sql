@@ -1,11 +1,14 @@
 {{
     config(
-        materialized = 'table',
+        materialized = 'incremental',
+        unique_key = ['feed_id', 'observed_at', 'trip_id', 'stop_id'],
+        on_schema_change = 'fail',
     )
 }}
 
 /*
-    A table, and the one place in this project that overrides the layer default.
+    Materialised, and the one place in this project that overrides the layer
+    default.
 
     Staging is a view everywhere else because it only renames and casts, and a
     second copy of the landing table would earn nothing. Here the "landing
@@ -19,6 +22,26 @@
 
     Materialising reads the files once, at build time, in the one place the
     relative path is known to be right. After that the warehouse stands alone.
+
+    ## Incremental
+
+    It was a plain table, rebuilt from every file on every run. That is fine
+    for an afternoon and wrong for the thing this is built to do: the landing
+    zone gains a few million rows a day, and re-reading a month of files to add
+    the last ten minutes means the run gets slower every day it succeeds.
+
+    So a run reads only what is new. It finds the newest row it already holds,
+    steps back `incremental_lookback_hours`, and reads the landing zone from
+    there (`macros/incremental.sql` has why the step back is not optional). The
+    overlap is re-read on purpose; the unique key is the natural key of an
+    observation, so a row that was already here is replaced by itself and
+    nothing is counted twice.
+
+    `tests/test_incremental.py` builds this in stages -- with a late file and
+    a replayed one -- and asserts the result is row-for-row the table a full
+    rebuild produces. `python run.py refresh` is that full rebuild.
+
+    ## What it does to a row
 
     Types, names, and the two identifiers the feed encodes in strings. No
     filtering: this is the landing table with its columns made usable, and a
@@ -36,6 +59,10 @@
 with source as (
 
     select * from {{ source('raw', 'stop_time_updates') }}
+
+    {% if is_incremental() -%}
+    where {{ landed_since(landing_cutoff_epoch(this)) }}
+    {%- endif %}
 
 ),
 

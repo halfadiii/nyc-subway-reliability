@@ -1,16 +1,101 @@
 version: 2
 
 models:
+  - name: int_last_sightings
+    description: >-
+      The last time each trip-stop pair was seen, and whether it has since
+      gone. One row per pair whatever became of it: arrived, cancelled, or
+      still on its way. Incremental: a run recomputes only the pairs seen
+      since the previous run had watched their feed to, and
+      tests/test_incremental.py proves the result equals a full rebuild.
+    meta:
+      grain: One row per service date, per trip, per stop.
+      refresh: Incremental. Only pairs whose answer could have changed are recomputed.
+    data_tests:
+      - unique_combination:
+          columns: [service_date_raw, trip_id, stop_id]
+    columns:
+      - name: service_date_raw
+        description: The service date the trip belongs to, YYYYMMDD.
+        data_tests: [not_null]
+      - name: feed_id
+        description: The endpoint the pair was observed on.
+        data_tests: [not_null]
+      - name: route_id
+        description: The route, e.g. A.
+      - name: trip_id
+        description: MTA trip identifier, unique within a service date.
+        data_tests: [not_null]
+      - name: train_id
+        description: The MTA's internal identifier for the physical train.
+      - name: stop_id
+        description: A single platform, e.g. 127N.
+        data_tests: [not_null]
+      - name: station_id
+        description: The stop id with its direction letter removed.
+      - name: platform_direction
+        description: N or S, from the stop id.
+      - name: direction
+        description: NORTH, SOUTH, EAST or WEST, from the MTA's extension.
+      - name: last_predicted_arrival
+        description: >-
+          The prediction carried by the last observation of the pair. If the
+          pair went on to vanish close to this time, this is the arrival.
+        data_tests: [not_null]
+      - name: last_seen_at
+        description: When that last observation was made, on the feed's clock.
+        data_tests: [not_null]
+      - name: lead_seconds
+        description: >-
+          How far ahead the prediction still was at the last sighting. Not
+          bounded here: a pulled trip can be many minutes out. The
+          cancellation threshold is applied in int_inferred_arrivals.
+        data_tests: [not_null]
+      - name: observations_of_pair
+        description: How many snapshots carried this pair, over its whole history.
+        data_tests: [not_null]
+      - name: scheduled_track
+        description: The track the timetable had the train on.
+      - name: actual_track
+        description: The track it was actually routed to.
+      - name: has_vanished
+        description: >-
+          True once the pair has been absent from a later snapshot of its own
+          feed. False means it was in the newest one: it has not disappeared,
+          we stopped looking.
+        data_tests: [not_null]
+
   - name: int_inferred_arrivals
     description: >-
       The measurement the project exists for: an arrival reconstructed from the
       absence of a record. Three rules decide whether a disappearance counts;
       they are set out in the model and proved in tests/test_pipeline.py
       against fixtures whose answer is known by construction.
+    meta:
+      grain: One row per service date, per trip, per stop that the train reached.
+      refresh: A view. Always current with int_last_sightings.
     data_tests:
       - unique_combination:
           columns: [service_date_raw, trip_id, stop_id]
     columns:
+      - name: service_date_raw
+        description: The service date the trip belongs to, YYYYMMDD.
+      - name: feed_id
+        description: The endpoint the arrival was observed on.
+      - name: route_id
+        description: The route, e.g. A.
+      - name: trip_id
+        description: MTA trip identifier, unique within a service date.
+      - name: train_id
+        description: The MTA's internal identifier for the physical train.
+      - name: stop_id
+        description: A single platform, e.g. 127N.
+      - name: station_id
+        description: The stop id with its direction letter removed.
+      - name: platform_direction
+        description: N or S, from the stop id.
+      - name: direction
+        description: NORTH, SOUTH, EAST or WEST, from the MTA's extension.
       - name: inferred_arrival
         description: The last prediction that existed before the record vanished.
         data_tests: [not_null]
@@ -39,3 +124,7 @@ models:
           How many snapshots carried this pair before it went. One is a weaker
           observation than twenty and worth being able to filter on.
         data_tests: [not_null]
+      - name: scheduled_track
+        description: The track the timetable had the train on.
+      - name: actual_track
+        description: The track it was actually routed to.

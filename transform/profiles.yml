@@ -24,13 +24,24 @@ mta_reliability:
       threads: 4
       extensions:
         - json
-      settings:
-        # Spill to disk rather than die. The landing zone grows by a few
-        # million rows a day and the deduplicating window function over it has
-        # to sort; without somewhere to put the intermediate, a month of
-        # history is an allocation failure rather than a slow query.
+      # Spill to disk rather than die. The landing zone grows by a few million
+      # rows a day and the deduplicating window function over it has to sort;
+      # without somewhere to put the intermediate, a month of history is an
+      # allocation failure rather than a slow query.
+      #
+      # Under `config_options`, not `settings`, and the difference only shows
+      # at scale. `settings` are re-applied as SET statements by every thread,
+      # and DuckDB refuses to change the temp directory once anything has
+      # spilled into it -- so on a week of history the first model spilled,
+      # the second thread's SET failed, and three models died with "Cannot
+      # switch temporary directory after the current one has been used". The
+      # sample is far too small to spill, which is why nothing caught it until
+      # a week-sized run did. `config_options` are given once, when the
+      # database is opened.
+      config_options:
         memory_limit: "{{ env_var('DUCKDB_MEMORY_LIMIT', '4GB') }}"
         temp_directory: "{{ env_var('DUCKDB_TEMP', '../data/duckdb-tmp') }}"
+      settings:
         preserve_insertion_order: false
 
     bigquery:

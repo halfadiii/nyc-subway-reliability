@@ -35,9 +35,13 @@ built. Then, to collect your own:
 
 ```bash
 python run.py poll        # eight feeds, every 30s, Ctrl-C when you have had enough
-python run.py build       # rebuild the warehouse from everything collected
-python run.py test        # 56 dbt checks + 8 correctness tests
+python run.py build       # add what was collected since the last build
+python run.py test        # 59 dbt checks + 17 correctness tests
 ```
+
+`build` is incremental: it reads only what landed since the last one.
+`python run.py refresh` rebuilds from every raw file. The two are proved to give
+the same warehouse; see [below](#incremental-and-proved-equal-to-a-rebuild).
 
 `python run.py` on its own lists every task. There is a `Makefile` with the same
 targets for anyone who prefers it; `run.py` exists because Windows does not ship
@@ -54,7 +58,8 @@ There is no API key. The subway realtime feeds are open.
 | --- | --- | --- |
 | **Poll** | `ingest/poller.py` | Eight endpoints, concurrently, every 30s. Retries, per-feed isolation, atomic writes. |
 | **Land** | `data/raw/dt=…/hour=…` | Gzipped NDJSON, Hive-partitioned. Append-only: nothing deduplicated or corrected on the way in. |
-| **Stage** | `stg_stop_time_updates` | Types, names, and the two identifiers the feed hides inside strings. |
+| **Stage** | `stg_stop_time_updates` | Types, names, and the two identifiers the feed hides inside strings. Incremental. |
+| **Track** | `int_last_sightings` | The last time each trip-stop pair was seen, and whether it has gone. Incremental. |
 | **Infer** | `int_inferred_arrivals` | The arrival, reconstructed from an absence. Three rules; see below. |
 | **Model** | `fct_arrivals` → `fct_headways` → `fct_excess_wait` | Star schema, with `dim_stations` and `dim_routes` from the published static bundle. |
 | **Analyse** | `analysis/rain_regression.py` | Excess wait against hourly rainfall, per route, with confidence intervals. |
@@ -63,6 +68,10 @@ The same models run on **DuckDB** (locally, off the files, no credentials) and
 on **BigQuery** (`--target bigquery`). Every one of them is written with dbt's
 cross-database macros rather than either dialect's own functions, so there is one
 definition of an arrival and not two.
+
+Every table and every column is described in **[docs/catalog.md](docs/catalog.md)**,
+which is generated from the project (`python run.py catalog`) and checked in CI:
+a column without a description fails the build.
 
 ---
 
@@ -112,6 +121,88 @@ the thing it is checking only passes on the default.
 
 ---
 
+## Incremental, and proved equal to a rebuild
+
+The pipeline is meant to run for weeks, and the first version rebuilt every
+table from every file on every run. That gets slower each day it succeeds. The
+two models that carry the volume now read only what is new.
+
+**`stg_stop_time_updates`** finds the newest observation it holds, steps back
+three hours, and reads the landing zone from there. The step back is not
+optional: a file can land late (a backfill, a replay) carrying a timestamp
+older than rows already loaded, and "everything newer than the newest row"
+would skip it without a word. The overlap is re-read on purpose and the unique
+key discards the repeats.
+
+**`int_last_sightings`** is the harder one, because the question it answers is
+about absence. A run recomputes only the pairs whose answer could have changed:
+pairs seen since the previous run's watermark, and pairs that were in the
+newest snapshot last time. That second group is the one a naive incremental
+model gets wrong. A train in the last snapshot of one run has not vanished; it
+becomes an arrival in the next run *without ever being observed again*, purely
+because the watermark moved past it. A model that only looks at new rows never
+revisits it, and silently loses every arrival at the edge of every run.
+
+The cancellation threshold is deliberately not stored. It is applied in a view
+at read time, so the sensitivity sweep can vary it without rebuilding anything.
+
+**None of that is worth anything unless the result is the same.** A fast model
+that is slightly wrong is worse than a slow one, because nothing about it looks
+wrong. So `tests/test_incremental.py` builds the same raw files twice, once in
+several sittings and once in a single pass, and compares the warehouses as
+sets:
+
+```
+tests/test_incremental.py
+  three sittings                          -> the same warehouse as one pass
+  a train in the newest snapshot          -> arrives once somebody looks again
+  an arrival whose train comes back       -> is withdrawn
+  a feed that stops and resumes           -> picked up where it left off
+  a run with nothing new                  -> changes nothing
+  the threshold, varied                   -> no rebuild needed
+  a late file and a replayed file         -> loaded once, counted once
+  a file later than the lookback          -> missed, until a refresh  (the limit, stated)
+  the committed sample, in three sittings -> the same warehouse as one pass
+```
+
+Breaking the rule on purpose (recomputing only pairs with *new* observations)
+fails five of the nine, which is the check that the tests can fail at all.
+
+**What it buys, measured.** The collected run copied out to seven days, 11.2M
+observations, with the last ten minutes arriving as a new batch:
+
+| | staging | last sightings | whole build |
+| --- | --- | --- | --- |
+| Full rebuild | 21.6s | 7.2s | 29.9s |
+| Incremental | 6.9s | 2.6s | 11.2s |
+
+Identical output, checked the same way. "Whole build" is every model and seed;
+the dbt tests are left out of the timing. The honest reading: the incremental
+cost is set by the three-hour overlap and stays flat, while the rebuild grows
+with the history, so the gap widens every day. On the 150 minutes actually
+collected the overlap covers everything and incremental saves nothing. This is
+a simulation of a week (the same night repeated, one file per hour instead of
+one per snapshot), not a week of collection.
+
+**Two things that comparison found**, neither of them in the incremental code:
+
+- `fct_headways` was not deterministic. Two trips are sometimes inferred to
+  reach one platform in the same second (once in the 150 minutes collected, 19
+  times in the week-sized copy), and the window was ordered by arrival alone,
+  so which of them counted as "the train in front" depended on storage order.
+  Same headways, different trip ids, between two builds of the same data. Now
+  ordered by arrival and then trip id.
+- The DuckDB profile could not survive a spill to disk. The temp directory was
+  set per thread, DuckDB refuses to change it once used, and the first model to
+  spill took the next three down with it. The sample is too small to spill, so
+  nothing had ever caught it.
+
+The limit is real and written down as a test: a file that lands more than
+three hours late is not found by an incremental run. `python run.py refresh`
+finds it, because the raw files are the truth and that build reads all of them.
+
+---
+
 ## Why excess wait, and not the average gap
 
 The intuitive metric is the mean headway, and it is the wrong one. Riders do not
@@ -158,7 +249,7 @@ tests/test_pipeline.py
   stops the timetable omits               -> kept, flagged, join still holds
 ```
 
-Plus 56 dbt checks on every run: uniqueness on the real compound grain,
+Plus 59 dbt checks on every run: uniqueness on the real compound grain,
 not-null, referential integrity from every fact to both dimensions, and four
 singular tests including one asserting that excess wait can never be negative
 — which is a statement about arithmetic (it is a variance) rather than a hope
@@ -231,9 +322,14 @@ analysis/
   rain_regression.py
   sensitivity.py    how much the cancellation threshold moves the answer
 load/bigquery/      DDL and a loader for the BigQuery path
-tests/              the correctness tests described above
+scripts/
+  summarise.py      what a build produced, printed
+  catalog.py        writes docs/catalog.md from the project
+tests/
+  test_pipeline.py     the inference rules, on data with a known answer
+  test_incremental.py  incremental build == full rebuild
 deploy/             Dockerfile for the poller
-docs/               architecture, deployment, and the original step-by-step
+docs/               architecture, deployment, the data catalog, and the original step-by-step
 data/sample/        real observations, committed, so `make demo` works
 ```
 
@@ -259,8 +355,9 @@ There is a version trap there worth knowing about before it costs you an hour;
 **Working and verified here.** A 150-minute continuous run of all eight feeds:
 300 rounds, **1,600,014 rows, zero failures** across 2,400 fetches and zero
 duplicate snapshots. That built to 9,344 inferred arrivals, 7,789 headways and
-3,408 route-hours of excess wait, with all 56 dbt checks and all 8 correctness
-tests passing, in 15 seconds.
+3,408 route-hours of excess wait, with every dbt check and every correctness
+test passing, in 15 seconds. (That run predates the incremental models; the
+suite is now 59 dbt checks and 17 correctness tests.)
 
 The worst hour it found, on overnight service: the A at 59 St–Columbus Circle,
 mean headway 20.6 minutes and **8.9 minutes of excess wait** — riders waiting
@@ -271,7 +368,9 @@ of them.
 (`load/bigquery/`). The DDL and the loader are here and `--dry-run` works, but
 they have not been run against a real dataset, because doing that needs a GCP
 project and credentials that do not belong in this repository. The dbt models
-themselves are dialect-portable and tested on DuckDB.
+themselves are dialect-portable and tested on DuckDB. The same applies to the
+incremental models: the BigQuery branches of their macros are written and have
+not been run.
 
 **Needs time rather than code:** the rain regression. It is finished; it is
 waiting on history. It needs weeks of observations before it can say anything,

@@ -40,9 +40,16 @@ jobs:
           MTA_DUCKDB: ../data/ci.duckdb
         run: dbt build --profiles-dir .
 
+      - name: Every table and column is documented
+        # The catalog is generated from the project. This fails if a column
+        # exists in the warehouse with no description, or is described and
+        # does not exist; see scripts/catalog.py.
+        run: python scripts/catalog.py data/ci.duckdb --check
+
       - name: Correctness tests
         # These build their own fixtures with a known answer and run the real
-        # models against them; see tests/test_pipeline.py.
+        # models against them: the inference rules in tests/test_pipeline.py,
+        # and incremental == full rebuild in tests/test_incremental.py.
         run: python -m pytest tests -q
 
       - name: Summary

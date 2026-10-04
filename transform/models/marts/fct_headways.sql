@@ -49,15 +49,25 @@ with arrivals as (
 
 sequenced as (
 
+    -- Ordered by arrival and then by trip id, and the second key matters. Two
+    -- trips are sometimes inferred to reach one platform in the same second
+    -- (once in the 150-minute run, 19 times in a week-sized copy of it).
+    -- Ordered by arrival alone, which of the two counts as "the train in
+    -- front" is left to whatever order the rows happen to be stored in, so
+    -- two builds of the same data could name different trips. The headways
+    -- themselves were the same either way; the trip ids attached to them
+    -- were not. Found by comparing an incremental build against a full
+    -- rebuild, which is a comparison that only passes if every model is
+    -- deterministic.
     select
         arrivals.*,
         lag(inferred_arrival) over (
             partition by service_date_raw, route_id, stop_id
-            order by inferred_arrival
+            order by inferred_arrival, trip_id
         ) as previous_arrival,
         lag(trip_id) over (
             partition by service_date_raw, route_id, stop_id
-            order by inferred_arrival
+            order by inferred_arrival, trip_id
         ) as previous_trip_id
     from arrivals
 

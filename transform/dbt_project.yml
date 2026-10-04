@@ -14,7 +14,8 @@ models:
   mta_reliability:
     staging:
       # Views: staging only renames and casts, so materialising it would be a
-      # second copy of the landing table earning nothing.
+      # second copy of the landing table earning nothing. The one model in the
+      # layer overrides this, and says why.
       +materialized: view
     intermediate:
       +materialized: view
@@ -47,3 +48,18 @@ vars:
   # hole in the observations invents a wait nobody had.
   min_headway_minutes: 0.5
   max_headway_minutes: 60
+
+  # ---------------------------------------------------------------------
+  # How far an incremental run steps back from the newest row it holds.
+  #
+  # The two large models -- staging and the last sighting of every trip-stop
+  # pair -- only read what is new. "New" cannot mean "newer than the newest
+  # row loaded", because a file can land late. So each run re-reads this many
+  # hours of overlap and lets the unique key discard the repeats.
+  #
+  # Three hours is far longer than anything the poller does on its own: it
+  # writes a file within seconds of fetching it. The overlap is there for a
+  # backfill or a replay. Anything landing later than this needs
+  # `python run.py refresh`, which rebuilds from the raw files.
+  # ---------------------------------------------------------------------
+  incremental_lookback_hours: 3

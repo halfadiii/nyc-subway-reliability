@@ -7,32 +7,83 @@ models:
       identifiers the feed hides inside strings pulled out, and exact
       duplicates removed on the natural key. Nothing is filtered -- what counts
       as an arrival is decided one layer up, on a stated rule, where the
-      decision is visible in a diff.
+      decision is visible in a diff. Incremental: a run reads only the landing
+      files newer than what it already holds, less a lookback for late files.
+    meta:
+      grain: One row per feed, per snapshot, per trip, per stop still ahead of it.
+      refresh: Incremental. Every build adds what landed since the last one.
     data_tests:
       - unique_combination:
           columns: [feed_id, observed_at, trip_id, stop_id]
     columns:
       - name: feed_id
+        description: Which of the eight MTA endpoints this snapshot came from.
         data_tests:
           - not_null
           - accepted_values:
               values: [numbered, ace, bdfm, g, jz, nqrw, l, sir]
+      - name: trip_id
+        description: >-
+          MTA trip identifier, unique within a service date. Part of the
+          natural key the incremental load replaces rows on, which is why it
+          may not be null: a null never equals itself, so a row without one
+          would be loaded again on every run.
+        data_tests: [not_null]
+      - name: stop_id
+        description: A single platform, e.g. 127N. Not a station.
+        data_tests: [not_null]
+      - name: station_id
+        description: The stop id with its direction letter removed.
+        data_tests: [not_null]
+      - name: platform_direction
+        description: N or S, from the last letter of the stop id. Null where it carries none.
+        data_tests:
+          - accepted_values:
+              values: ['N', 'S']
+      - name: route_id
+        description: The route, e.g. A. Joins to dim_routes.
+      - name: service_date_raw
+        description: >-
+          The service date the trip belongs to, YYYYMMDD, as the feed states
+          it. Not the calendar date of the observation: a train leaving at
+          00:40 belongs to the previous service day.
+        data_tests: [not_null]
       - name: observed_at
         description: The feed's own clock. The event time.
         data_tests: [not_null]
       - name: fetched_at
         description: Our clock. Never the event time.
         data_tests: [not_null]
-      - name: stop_id
-        data_tests: [not_null]
-      - name: station_id
-        description: The stop id with its direction letter removed.
-        data_tests: [not_null]
-      - name: platform_direction
-        data_tests:
-          - accepted_values:
-              values: ['N', 'S']
+      - name: predicted_arrival
+        description: >-
+          What the MTA believed, at observed_at, about when this trip would
+          reach this stop. A prediction, never an arrival.
+      - name: predicted_departure
+        description: The same, for leaving the stop.
+      - name: feed_lag_seconds
+        description: >-
+          fetched_at minus observed_at. The only evidence that a feed has
+          stopped regenerating, since a stale endpoint still answers.
+      - name: direction
+        description: NORTH, SOUTH, EAST or WEST, from the MTA's extension to the feed.
+      - name: train_id
+        description: The MTA's internal identifier for the physical train.
+      - name: is_assigned
+        description: Whether the trip has been assigned to physical equipment yet.
+      - name: stop_sequence
+        description: Position in the trip's list of remaining stops at this observation.
+      - name: scheduled_track
+        description: The track the timetable has the train on at this stop.
+      - name: actual_track
+        description: The track it is actually routed to, where the feed says.
       - name: schedule_relationship
+        description: >-
+          SCHEDULED, SKIPPED, NO_DATA or UNSCHEDULED. Only SCHEDULED rows can
+          become arrivals.
         data_tests:
           - accepted_values:
               values: [SCHEDULED, SKIPPED, NO_DATA, UNSCHEDULED]
+      - name: trip_origin_minutes
+        description: >-
+          The trip's departure from its origin, in minutes after midnight,
+          decoded from the trip id. The only human-stable name a trip has.

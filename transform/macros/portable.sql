@@ -102,3 +102,17 @@
 {% macro bigquery__to_ny(column) -%}
     datetime({{ column }}, 'America/New_York')
 {%- endmacro %}
+
+
+{#- Timestamp -> epoch seconds. The inverse of the first macro in this file. -#}
+{% macro timestamp_to_epoch(expression) -%}
+    {{ return(adapter.dispatch('timestamp_to_epoch', 'mta_reliability')(expression)) }}
+{%- endmacro %}
+
+{% macro default__timestamp_to_epoch(expression) -%}
+    cast(epoch({{ expression }}) as bigint)
+{%- endmacro %}
+
+{% macro bigquery__timestamp_to_epoch(expression) -%}
+    unix_seconds({{ expression }})
+{%- endmacro %}
